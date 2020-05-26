@@ -5,3 +5,4 @@ obj/**
 *.app
 *.unitypackage
 Assets/AniInstancing/Scripts/AnimationInstancing.cs
+Logs/
