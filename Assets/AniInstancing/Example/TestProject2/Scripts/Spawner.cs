@@ -72,6 +72,7 @@ public class Spawner: MonoBehaviour {
                     {
                         GameObject obj = AnimationInstancing.AnimationInstancingMgr.Instance.CreateInstance(prefabA);
                         obj.transform.position = new Vector3(0, 0, 0);
+                        obj.SetActive(true);
                         objList.Add(obj);
                         //obj.transform.rotation = Quaternion.Euler(0, Random.Range(0, 360), 0);
                         //obj.GetComponent<AnimationInstancing.AnimationInstancing>().PlayAnimation(Random.Range(0, 2));

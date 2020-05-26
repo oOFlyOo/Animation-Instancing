@@ -6,3 +6,6 @@ obj/**
 *.unitypackage
 Assets/AniInstancing/Scripts/AnimationInstancing.cs
 Logs/
+.vs/
+*.sln
+*.csproj
