@@ -107,7 +107,7 @@ namespace AnimationInstancing
             InitializeCullingGroup();
             cameraTransform = Camera.main.transform;
             aniInstancingList = new List<AnimationInstancing>(1000);
-            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.OpenGLES2)
+            if (SystemInfo.supportsInstancing)
             {
                 instancingPackageSize = 1;
                 UseInstancing = false;
