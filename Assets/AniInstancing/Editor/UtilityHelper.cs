@@ -25,6 +25,7 @@ namespace AnimationInstancing
             Matrix4x4[] matrix = new Matrix4x4[bonePose.Length];
             for (int i = 0; i != bonePose.Length; ++i)
             {
+                // bonePose = bonePose.worldToLocalMatrix * root.localToWorldMatrix
                 matrix[i] = rootMat * bonePose[i].localToWorldMatrix * bindPose[i];
             }
             return matrix;

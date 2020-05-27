@@ -13,6 +13,10 @@ using UnityEngine;
 
 namespace AnimationInstancing
 {
+    /// <summary>
+    /// 加载管理
+    /// todo 一般都改成用自己的
+    /// </summary>
     public class AnimationManager : Singleton<AnimationManager>
     {
         // A request to create animation info, because we use async method

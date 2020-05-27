@@ -6,10 +6,18 @@ namespace AnimationInstancing
 {
     public class RuntimeHelper
     {
-        // Merge all bones to a single array and merge all bind pose
+        /// <summary>
+        /// Merge all bones to a single array and merge all bind pose
+        /// 将多个蒙皮模型的网格合并到一起
+        /// todo 单个Render的话，感觉没太必要，不需要bindPose的话，直接返回bones应该就行了
+        /// </summary>
+        /// <param name="meshRender"></param>
+        /// <param name="bindPose">外部传入的空数组 todo 改成内部或者外部缓存</param>
+        /// <returns></returns>
         public static Transform[] MergeBone(SkinnedMeshRenderer[] meshRender, List<Matrix4x4> bindPose)
         {
             UnityEngine.Profiling.Profiler.BeginSample("MergeBone()");
+            // todo 改成缓存
             List<Transform> listTransform = new List<Transform>(150);
             for (int i = 0; i != meshRender.Length; ++i)
             {
@@ -32,9 +40,11 @@ namespace AnimationInstancing
                     }
                     else
                     {
+                        // todo 这里的操作好像没太必要，而且判空不见了
                         bindPose[index] = checkBindPose[j];
                     }
                 }
+                // todo 这里好像不应该这么做
                 meshRender[i].enabled = false;
             }
             UnityEngine.Profiling.Profiler.EndSample();

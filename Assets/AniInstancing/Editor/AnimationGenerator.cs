@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -6,6 +7,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditorInternal;
 using System.IO;
+using Object = UnityEngine.Object;
 
 
 namespace AnimationInstancing
@@ -22,6 +24,9 @@ namespace AnimationInstancing
         private GameObject generatedFbx;
         private bool exposeAttachments;
         private bool showAttachmentSetting = false;
+        /// <summary>
+        /// 有些挂点不在Bone里面，需要额外记录来同步挂点
+        /// </summary>
         private ExtraBoneInfo extraBoneInfo;
         private Dictionary<string, bool> selectExtraBone = new Dictionary<string, bool>();
         [SerializeField]
@@ -30,17 +35,28 @@ namespace AnimationInstancing
         
 
         private ArrayList aniInfo = new ArrayList();
-        private int aniFps = 15;
+        /// <summary>
+        /// 默认帧率30帧
+        /// </summary>
+        private int aniFps = 30;
 
+        /// <summary>
+        /// 一个State构建一个BakeInfo
+        /// </summary>
         class AnimationBakeInfo
         {
             public SkinnedMeshRenderer[] meshRender;
             public Animator animator;
+            // 当前记录到哪一帧
             public int workingFrame;
+            // 时长
             public float length;
             public int layer;
             public AnimationInfo info;
         }
+        /// <summary>
+        /// 以蒙皮Renderer的节点名hash做key
+        /// </summary>
         private Dictionary<int, AnimationInstancingMgr.VertexCache> generateVertexCachePool;
         private Dictionary<int, ArrayList> generateMatrixDataPool;
         private GenerateOjbectInfo[] generateObjectData;
@@ -55,10 +71,17 @@ namespace AnimationInstancing
         // to cache the bone count of object in bake flow
         int boneCount = 20;
         const int BakeFrameCount = 10000;
+        /// <summary>
+        /// 转换矩阵一列4个像素
+        /// </summary>
         int textureBlockWidth = 4;
         int textureBlockHeight = 10;
         int[] stardardTextureSize = { 64, 128, 256, 512, 1024 };
         int bakedTextureIndex;
+        /// <summary>
+        /// 实际设计的时候基本就是考虑单贴图
+        /// 否则动画融合之类的会出现问题
+        /// </summary>
         private Texture2D[] bakedBoneTexture = null;
         private int pixelx = 0, pixely = 0;
 
@@ -103,6 +126,8 @@ namespace AnimationInstancing
                 generateInfo.RemoveAt(0);
 
                 workingInfo.animator.gameObject.SetActive(true);
+                // todo 以前项目为了更新Animator数据，也是这样子操作的
+                // todo 忘了如果不这么处理的话，会有什么问题了
                 workingInfo.animator.Update(0);
                 workingInfo.animator.Play(workingInfo.info.animationNameHash);
                 workingInfo.animator.Update(0);
@@ -121,9 +146,13 @@ namespace AnimationInstancing
                                             Matrix4x4.identity,
                                             false);
                 }
-                //Debug.Log("The length is" + workingInfo.animator.velocity.magnitude);
-                workingInfo.info.velocity[workingInfo.workingFrame] = workingInfo.animator.velocity;
-                workingInfo.info.angularVelocity[workingInfo.workingFrame] = workingInfo.animator.angularVelocity * Mathf.Rad2Deg;
+
+                if (workingInfo.info.rootMotion)
+                {
+                    //Debug.Log("The length is" + workingInfo.animator.velocity.magnitude);
+                    workingInfo.info.velocity[workingInfo.workingFrame] = workingInfo.animator.velocity;
+                    workingInfo.info.angularVelocity[workingInfo.workingFrame] = workingInfo.animator.angularVelocity * Mathf.Rad2Deg;
+                }
 
                 if (++workingInfo.workingFrame >= workingInfo.info.totalFrame)
                 {
@@ -147,6 +176,7 @@ namespace AnimationInstancing
                         EditorUtility.ClearProgressBar();
                     }
 
+                    // 还原到原始位置继续
                     if (workingInfo.animator != null)
                     {
                         workingInfo.animator.gameObject.transform.position = Vector3.zero;
@@ -185,6 +215,7 @@ namespace AnimationInstancing
             }
             GUILayout.EndHorizontal();
 
+            // 使用预制，并且预制的Mesh是没有开启 Optimize Game Objects 的
             GameObject prefab = EditorGUILayout.ObjectField("Asset to Generate", generatedPrefab, typeof(GameObject), true) as GameObject;
             if (prefab != generatedPrefab)
             {
@@ -331,128 +362,6 @@ namespace AnimationInstancing
                 }
             }
         }
-        void BakeAnimation()
-        {
-#if UNITY_ANDROID || UNITY_IPHONE
-        Debug.LogError("You can't bake animations on IOS or Android. Please switch to PC.");
-        return;
-#endif
-            if (generatedPrefab != null)
-            {
-                GameObject obj = Instantiate(generatedPrefab);
-                obj.transform.position = Vector3.zero;
-                obj.transform.rotation = Quaternion.identity;
-                Animator animator = obj.GetComponentInChildren<Animator>();
-                
-                AnimationInstancing script = obj.GetComponent<AnimationInstancing>();
-                Debug.Assert(script);
-                SkinnedMeshRenderer[] meshRender = obj.GetComponentsInChildren<SkinnedMeshRenderer>();
-                List<Matrix4x4> bindPose = new List<Matrix4x4>(150);
-                Transform[] boneTransform = RuntimeHelper.MergeBone(meshRender, bindPose);
-                Reset();
-                AddMeshVertex2Generate(meshRender, boneTransform, bindPose.ToArray());
-
-                Transform rootNode = meshRender[0].rootBone;
-                for (int j = 0; j != meshRender.Length; ++j)
-                {
-                    meshRender[j].enabled = true;
-                }
-
-                int frames = 0;
-                var clips = GetClips(true);
-                foreach (AnimationClip animClip in clips)
-                {
-                    //float lastFrameTime = 0;
-                    int aniName = animClip.name.GetHashCode();
-                    int bakeFrames = Mathf.CeilToInt(animClip.length * aniFps);
-
-                    AnimationInfo info = new AnimationInfo();
-                    info.animationNameHash = aniName;
-                    info.animationIndex = frames;
-                    info.totalFrame = bakeFrames;
-
-                    //bool rotationRootMotion = false, positionRootMotion = false;
-                    //for (int i = 0; i < bakeFrames; i += 1)
-                    //{
-                    //    float bakeDelta = Mathf.Clamp01(((float)i / bakeFrames));
-                    //    float animationTime = bakeDelta * animClip.length;
-                    //    animClip.SampleAnimation(obj, animationTime);
-
-                    //    info.position[i] = rootNode.localPosition;
-                    //    info.rotation[i] = rootNode.localRotation;
-                    //    if (i > 0 && info.position[i] != info.position[i - 1])
-                    //    {
-                    //        positionRootMotion = true;
-                    //    }
-                    //    if (i > 0 && info.rotation[i] != info.rotation[i - 1])
-                    //    {
-                    //        rotationRootMotion = true;
-                    //    }
-                    //}
-                    //info.rootMotion = positionRootMotion;
-
-                    Matrix4x4 rootMatrix1stFrame = Matrix4x4.identity;
-                    animator.applyRootMotion = true;
-                    animator.Play("TestState", 0);
-                    //                 animator.StartRecording(bakeFrames);
-                    //                 for (int i = 0; i < bakeFrames; i += 1)
-                    //                 {
-                    //                     animator.Update(1.0f / m_fps);
-                    //                 }
-                    //                 animator.StopRecording();
-                    // 
-                    //                 animator.StartPlayback();
-                    //                 animator.playbackTime = 0;
-                    //AnimationInstancing script = m_prefab.GetComponent<AnimationInstancing>();
-                    for (int i = 0; i < bakeFrames; i += 1)
-                    {
-                        //float bakeDelta = Mathf.Clamp01(((float)i / bakeFrames));
-                        //float animationTime = bakeDelta * animClip.length;
-                        //float normalizedTime = animationTime / animClip.length;
-
-                        //UnityEditor.Animations.AnimatorController ac = animator.runtimeAnimatorController;
-                        //UnityEditorInternal.StateMachine sm = ac.GetLayerStateMachine(0);
-
-
-                        //AnimatorStateInfo nameInfo = animator.GetCurrentAnimatorStateInfo(0);
-
-                        //                     if (lastFrameTime == 0)
-                        //                     {
-                        //                         float nextBakeDelta = Mathf.Clamp01(((float)(i + 1) / bakeFrames));
-                        //                         float nextAnimationTime = nextBakeDelta * animClip.length;
-                        //                         lastFrameTime = animationTime - nextAnimationTime;
-                        //                     }
-                        //                     animator.Update(animationTime - lastFrameTime);
-                        //                     lastFrameTime = animationTime;
-
-                        animator.Update(1.0f / bakeFrames);
-
-                        //animClip.SampleAnimation(obj, animationTime);
-
-                        //if (i == 0)
-                        //{
-                        //    rootMatrix1stFrame = boneTransform[0].localToWorldMatrix;
-                        //}
-                        for (int j = 0; j != meshRender.Length; ++j)
-                        {
-                            GenerateBoneMatrix(meshRender[j].name.GetHashCode(),
-                                                    aniName,
-                                                    i,
-                                                    rootMatrix1stFrame,
-                                                    info.rootMotion);
-                        }
-                    }
-
-                    aniInfo.Add(info);
-                    frames += bakeFrames;
-                    SetupAnimationTexture(aniInfo);
-                }
-                //AnimationInstancingMgr.Instance.ExportBoneTexture(m_prefab.name);
-                SaveAnimationInfo(generatedPrefab.name);
-
-                DestroyImmediate(obj);
-            }
-        }
 
 
         void BakeWithAnimator()
@@ -485,9 +394,11 @@ namespace AnimationInstancing
                         for (int i = 0; i != trans.Length; ++i)
                         {
                             Transform tran = trans[i] as Transform;
+                            // 根据名字来作为额外挂点，则必须保证唯一
                             if (tran.name == obj.Key)
                             {
                                 bindPose.Add(tran.localToWorldMatrix);
+                                // 这里这么处理，默认了Prefab和Fbx必须得是一致的，不能在Prefab上添加挂点
                                 listExtra.Add(bakedTrans[i]);
                             }
                         }
@@ -511,11 +422,11 @@ namespace AnimationInstancing
                 Reset();
                 AddMeshVertex2Generate(meshRender, boneTransform, bindPose.ToArray());
 
-                Transform rootNode = meshRender[0].rootBone;
                 for (int j = 0; j != meshRender.Length; ++j)
                 {
                     meshRender[j].enabled = true;
                 }
+                // todo 不需要rootMotion的话，这里就是多余的
                 animator.applyRootMotion = true;
                 totalFrame = 0;
 
@@ -523,6 +434,7 @@ namespace AnimationInstancing
                 Debug.Assert(controller.layers.Length > 0);
                 cacheTransition.Clear();
                 cacheAnimationEvent.Clear();
+                // 只对单个Layer作用，多个Layer的话，状态机信息得序列化多份，动画信息是可以复用的
                 UnityEditor.Animations.AnimatorControllerLayer layer = controller.layers[0];
                 AnalyzeStateMachine(layer.stateMachine, animator, meshRender, 0, aniFps, 0);
                 generateCount = generateInfo.Count;
@@ -550,12 +462,14 @@ namespace AnimationInstancing
                 ChildAnimatorState state = stateMachine.states[i];
                 AnimationClip clip = state.state.motion as AnimationClip;
                 bool needBake = false;
+                // blendtree
                 if (clip == null)
                     continue;
                 if (!generateAnims.TryGetValue(clip.name, out needBake))
                     continue;
                 foreach (var obj in generateInfo)
                 {
+                    // 已经添加了
                     if (obj.info.animationName == clip.name)
                     {
                         needBake = false;
@@ -569,6 +483,7 @@ namespace AnimationInstancing
                 AnimationBakeInfo bake = new AnimationBakeInfo();
                 bake.length = clip.averageDuration;
                 bake.animator = animator;
+                // todo 防止烘培的时候不在视野内？
 				bake.animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
                 bake.meshRender = meshRender;
                 bake.layer = layer;
@@ -579,6 +494,7 @@ namespace AnimationInstancing
                 bake.info.totalFrame = (int)(bake.length * bakeFPS + 0.5f) + 1;
                 bake.info.totalFrame = Mathf.Clamp(bake.info.totalFrame, 1, bake.info.totalFrame);
                 bake.info.fps = bakeFPS;
+                // todo 可以不要
                 bake.info.rootMotion = true;
                 bake.info.wrapMode = clip.isLooping? WrapMode.Loop: clip.wrapMode;
                 if (bake.info.rootMotion)
@@ -607,12 +523,15 @@ namespace AnimationInstancing
                     bake.info.eventList.Add(aniEvent);
                 }
 
+                // todo 前面以动画名作为检测，则使用相同动画不同state就会出问题
                 cacheTransition.Add(state.state, state.state.transitions);
+                // 清空数据，防止干扰
                 state.state.transitions = null;
                 cacheAnimationEvent.Add(clip, clip.events);
                 UnityEngine.AnimationEvent[] tempEvent = new UnityEngine.AnimationEvent[0];
                 UnityEditor.AnimationUtility.SetAnimationEvents(clip, tempEvent);
             }
+            // sub state
             for (int i = 0; i != stateMachine.stateMachines.Length; ++i)
             {
                 AnalyzeStateMachine(stateMachine.stateMachines[i].stateMachine, animator, meshRender, layer, bakeFPS, animationIndex);
@@ -700,13 +619,14 @@ namespace AnimationInstancing
             aniInfo.Clear();
         }
 
+        [Obsolete("这是获取所有Clip，暂时用不上, true")]
         private List<AnimationClip> GetClips(bool bakeFromAnimator)
         {
             Object[] gameObject = new Object[] { generatedPrefab };
-            var clips = EditorUtility.CollectDependencies(gameObject).ToList();
+            List<Object> clips;
             if (bakeFromAnimator)
             {
-                clips.Clear();
+                clips = new List<Object>();
                 clips.AddRange(generatedPrefab.GetComponentInChildren<Animator>().runtimeAnimatorController.animationClips);
             }
             else
@@ -739,12 +659,12 @@ namespace AnimationInstancing
         private List<AnimationClip> GetClips(Animator animator)
         {
             UnityEditor.Animations.AnimatorController controller = animator.runtimeAnimatorController as UnityEditor.Animations.AnimatorController;
-            return GetClipsFromStatemachine(controller.layers[0].stateMachine);
+            return GetClipsFromStatemachine(controller.layers[0].stateMachine).ToList();
         }
 
-        private List<AnimationClip> GetClipsFromStatemachine(UnityEditor.Animations.AnimatorStateMachine stateMachine)
+        private HashSet<AnimationClip> GetClipsFromStatemachine(UnityEditor.Animations.AnimatorStateMachine stateMachine)
         {
-            List<AnimationClip> list = new List<AnimationClip>();
+            var list = new HashSet<AnimationClip>();
             for (int i = 0; i != stateMachine.states.Length; ++i)
             {
                 UnityEditor.Animations.ChildAnimatorState state = stateMachine.states[i];
@@ -760,17 +680,18 @@ namespace AnimationInstancing
 				else if (state.state.motion != null)
                 	list.Add(state.state.motion as AnimationClip);
             }
+            // Sub State
             for (int i = 0; i != stateMachine.stateMachines.Length; ++i)
             {
-                list.AddRange(GetClipsFromStatemachine(stateMachine.stateMachines[i].stateMachine));
+                list.IntersectWith(GetClipsFromStatemachine(stateMachine.stateMachines[i].stateMachine));
             }
 
-            var distinctClips = list.Select(q => (AnimationClip)q).Distinct().ToList();
-            for (int i = 0; i < distinctClips.Count; i++)
+            foreach (var clip in list)
             {
-                if (distinctClips[i] && generateAnims.ContainsKey(distinctClips[i].name) == false)
-                    generateAnims.Add(distinctClips[i].name, true);
+                if (clip && generateAnims.ContainsKey(clip.name) == false)
+                    generateAnims.Add(clip.name, true);
             }
+
             return list;
         }
 
@@ -870,16 +791,24 @@ namespace AnimationInstancing
             Debug.Assert(textureWidth > 0);
 
             bakedBoneTexture = new Texture2D[count];
+            // 这里强制了贴图格式，A通道其实没有必要
             TextureFormat format = TextureFormat.RGBAHalf;
             for (int i = 0; i != count; ++i)
             {
                 int width = count > 1 && i < count ? stardardTextureSize[stardardTextureSize.Length - 1] : textureWidth;
+                // todo linear工程不设置，可能不对
                 bakedBoneTexture[i] = new Texture2D(width, width, format, false);
                 bakedBoneTexture[i].filterMode = FilterMode.Point;
             }
         }
 
-        // calculate the texture count and every size
+        /// <summary>
+        /// calculate the texture count and every size
+        /// </summary>
+        /// <param name="textureCount"></param>
+        /// <param name="frames"></param>
+        /// <param name="bone">非空的时候是一般计算，并不是最终结果</param>
+        /// <returns></returns>
         public int CalculateTextureSize(out int textureCount, int[] frames, Transform[] bone = null)
         {
             int textureWidth = stardardTextureSize[0];
@@ -907,6 +836,7 @@ namespace AnimationInstancing
                 for (int j = 0; j != frames.Length; ++j)
                 {
                     int frame = frames[j];
+                    // 剩余填充帧数
                     int currentLineEmptyBlockCount = (size - x) / blockWidth % blockCountEachLine;
                     bool check = x == 0 && y == 0;
                     x = (x + frame % blockCountEachLine * blockWidth) % size;
@@ -916,6 +846,7 @@ namespace AnimationInstancing
                         y += currentLineEmptyBlockCount > 0 ? blockHeight : 0;
                     }
 
+                    // 超出
                     if (y + blockHeight > size)
                     {
                         x = y = 0;

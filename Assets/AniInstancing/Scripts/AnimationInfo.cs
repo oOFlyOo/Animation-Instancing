@@ -24,15 +24,20 @@ namespace AnimationInstancing
     public class AnimationInfo
     {
         public string animationName;
+        // 本质是StateNameHash
         public int animationNameHash;
+        // 帧长，多记录一帧
         public int totalFrame;
         public int fps;
+        // 每个动画帧开始帧Index
         public int animationIndex;
         public int textureIndex;
         public bool rootMotion;
         public WrapMode wrapMode;
+        // todo 以下两个数据用于rootMotion
         public Vector3[] velocity;
         public Vector3[] angularVelocity;
+        // todo 不使用帧事件系统可以去除
         public List<AnimationEvent> eventList; 
     }
 

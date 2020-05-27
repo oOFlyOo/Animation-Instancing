@@ -13,13 +13,16 @@ using System;
 
 namespace AnimationInstancing
 {
+    /// <summary>
+    /// 动画控制器
+    /// </summary>
     [AddComponentMenu("AnimationInstancing")]
     public class AnimationInstancing : MonoBehaviour
     {
         private Animator animator = null;
         [NonSerialized]
         public Transform worldTransform;
-        //public GameObject prefab { get; set; }
+        // 其实就是自身，有点多余
 		public GameObject prototype;
         public BoundingSphere boundingSpere;
         public bool visible { get; set; }
@@ -297,6 +300,7 @@ namespace AnimationInstancing
                 }
             }
 
+            // todo 比起删掉该组件，释放掉Controller才是关键
             Destroy(GetComponent<Animator>());
             //Destroy(GetComponentInChildren<SkinnedMeshRenderer>());
 

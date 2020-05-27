@@ -14,6 +14,9 @@ using System.IO;
 
 namespace AnimationInstancing
 {
+    /// <summary>
+    /// 动画系统管理器
+    /// </summary>
     [AddComponentMenu("AnimationInstancingMgr")]
     public class AnimationInstancingMgr : Singleton<AnimationInstancingMgr>
     {
@@ -43,6 +46,9 @@ namespace AnimationInstancing
             public List<InstancingPackage>[] packageList;
         }
 
+        /// <summary>
+        /// 蒙皮信息
+        /// </summary>
         public class VertexCache
         {
             public int nameCode;
@@ -53,6 +59,7 @@ namespace AnimationInstancing
             public Material[] materials = null;
             public Matrix4x4[] bindPose;
             public Transform[] bonePose;
+            // 对应 animationTextureList
             public int boneTextureIndex = -1;
 
             // these are temporary, should be moved to InstancingPackage
@@ -63,6 +70,7 @@ namespace AnimationInstancing
 
         public class AnimationTexture
         {
+            // 用了预制名来匹配
             public string name { get; set; }
             public Texture2D[] boneTexture { get; set; }
             public int blockWidth { get; set; }
@@ -447,12 +455,7 @@ namespace AnimationInstancing
                 //offset.y = 0.0f;
                 Vector3 localPosition = instance.worldTransform.localPosition;
                 localPosition += offset;
-#if UNITY_5_6_OR_NEWER
                 instance.worldTransform.SetPositionAndRotation(localPosition, localQuaternion);
-#else
-                instance.worldTransform.localPosition = localPosition;
-                instance.worldTransform.localRotation = localQuaternion;
-#endif
             }
         }
 
