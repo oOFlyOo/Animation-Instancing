@@ -22,8 +22,13 @@ namespace AnimationInstancing
         private Animator animator = null;
         [NonSerialized]
         public Transform worldTransform;
-        // 其实就是自身，有点多余
+        /// <summary>
+        /// 其实就是自身，有点多余
+        /// </summary>
 		public GameObject prototype;
+        /// <summary>
+        /// 用来配合CullGroup
+        /// </summary>
         public BoundingSphere boundingSpere;
         public bool visible { get; set; }
         public AnimationInstancing parentInstance { get; set; }
@@ -43,6 +48,9 @@ namespace AnimationInstancing
         public bool IsPause() { return speedParameter == 0.0f; }
 
         public bool applyRootMotion = false;
+        /// <summary>
+        /// 改成用Unity的SkinQuality可能更方便
+        /// </summary>
         [Range(1, 4)]
         public int bonePerVertex = 4;
         [NonSerialized]
@@ -55,6 +63,9 @@ namespace AnimationInstancing
         public int preAniIndex = -1;
         [NonSerialized]
         public int aniTextureIndex = -1;
+        /// <summary>
+        /// 实际多张骨骼图的过渡还没支持
+        /// </summary>
         int preAniTextureIndex = -1;
         float transitionDuration = 0.0f;
         bool isInTransition = false;
@@ -64,6 +75,9 @@ namespace AnimationInstancing
         private int eventIndex = -1;
 
         public List<AnimationInfo> aniInfo;
+        /// <summary>
+        /// 匹配Hash搜索，可以共用一个
+        /// </summary>
         private ComparerHash comparer;
         private AnimationInfo searchInfo;
         private AnimationEvent aniEvent = null;
@@ -247,8 +261,9 @@ namespace AnimationInstancing
 			AnimationManager.InstanceAnimationInfo info = AnimationManager.Instance.FindAnimationInfo(prototype, this);
             if (info != null)
             {
-                aniInfo = info.listAniInfo;
-                Prepare(aniInfo, info.extraBoneInfo);
+                // aniInfo = info.listAniInfo;
+                // 这里的操作挺有问题的，如果已经有数据了直接使用，没有的话就直接在外部赋值
+                Prepare(info.listAniInfo, info.extraBoneInfo);
             }
             searchInfo = new AnimationInfo();
             comparer = new ComparerHash();

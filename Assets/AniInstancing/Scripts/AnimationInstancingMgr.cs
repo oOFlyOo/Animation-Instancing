@@ -20,7 +20,10 @@ namespace AnimationInstancing
     [AddComponentMenu("AnimationInstancingMgr")]
     public class AnimationInstancingMgr : Singleton<AnimationInstancingMgr>
     {
-        // array[index base on texture][package index][instance index]
+        /// <summary>
+        /// array[index base on texture][package index][instance index]
+        /// [贴图index][分块限制200][每个块里面的具体内容]
+        /// </summary>
         public class InstanceData
         {
             public List<Matrix4x4[]>[] worldMatrix;
@@ -35,6 +38,7 @@ namespace AnimationInstancing
             public int animationTextureIndex = 0;
             public int subMeshCount = 1;
             public int instancingCount;
+            // todo 这里固定了1，不知道作用
             public int size;
             public MaterialPropertyBlock propertyBlock;
         }
@@ -51,8 +55,10 @@ namespace AnimationInstancing
         /// </summary>
         public class VertexCache
         {
+            // renderName + boneName(attach only)
             public int nameCode;
             public Mesh mesh = null;
+            // 以+=MatNameHash
             public Dictionary<int, MaterialBlock> instanceBlockList;
             public Vector4[] weight;
             public Vector4[] boneIndex;
@@ -82,6 +88,10 @@ namespace AnimationInstancing
         // to calculate lod level
         private Transform cameraTransform; 
         private Dictionary<int, VertexCache> vertexCachePool;
+        /// <summary>
+        /// renderName + boneName(attach only)
+        /// todo 创建出来就没有过
+        /// </summary>
         private Dictionary<int, InstanceData> instanceDataPool;
         const int InstancingSizePerPackage = 200;
         int instancingPackageSize = InstancingSizePerPackage;
@@ -111,11 +121,12 @@ namespace AnimationInstancing
 
         private void OnEnable()
         {
+            // todo 有点多了
             boundingSphere = new BoundingSphere[5000];
             InitializeCullingGroup();
             cameraTransform = Camera.main.transform;
             aniInstancingList = new List<AnimationInstancing>(1000);
-            if (SystemInfo.supportsInstancing)
+            if (!SystemInfo.supportsInstancing)
             {
                 instancingPackageSize = 1;
                 UseInstancing = false;
@@ -200,25 +211,6 @@ namespace AnimationInstancing
                         block.Value.runtimePackageIndex[k] = 0;
                     }
                 }
-
-//                 if (obj.Value.instancingData == null)
-//                     continue;
-//                 vertexCache.bufInstance.SetData(obj.Value.instancingData);
-// 
-//                 for (int i = 0; i != vertexCache.subMeshCount; ++i)
-//                 {
-//                     Material material = vertexCache.instanceMaterial[i];
-//                     material.SetBuffer("buf_InstanceMatrices", vertexCache.bufInstance);
-//                     vertexCache.args[i][1] = (uint)vertexCache.currentInstancingIndex;
-//                     vertexCache.bufArgs[i].SetData(vertexCache.args[i]);
-// 
-//                     Graphics.DrawMeshInstancedIndirect(vertexCache.mesh,
-//                                     i,
-//                                     vertexCache.instanceMaterial[i],
-//                                     new Bounds(Vector3.zero, new Vector3(10000.0f, 10000.0f, 10000.0f)),
-//                                     vertexCache.bufArgs[i]);
-//                 }
-//                 vertexCache.currentInstancingIndex = 0;
             }
         }
 
@@ -241,6 +233,10 @@ namespace AnimationInstancing
             return obj;
         }
 
+        /// <summary>
+        /// todo 改成直接传AI
+        /// </summary>
+        /// <param name="obj"></param>
         public void AddInstance(GameObject obj)
         {
             AnimationInstancing script = obj.GetComponent<AnimationInstancing>();
@@ -254,6 +250,7 @@ namespace AnimationInstancing
 
             try
             {
+                // 要是failed了，bounding就错乱了
                 bool success = script.InitializeAnimation();
                 if (success)
                     aniInstancingList.Add(script);
@@ -338,8 +335,10 @@ namespace AnimationInstancing
 
                 instance.UpdateAnimation();
                 instance.boundingSpere.position = instance.transform.position;
+                // 因为移除那里打乱了，因此必须同步一下
                 boundingSphere[i] = instance.boundingSpere;
 
+                // todo 不可见，上面的UpdateAnimation意义就不大了
                 if (!instance.visible)
                     continue;
                 instance.UpdateLod(cameraPosition);
@@ -952,6 +951,13 @@ namespace AnimationInstancing
         }
 
 
+        /// <summary>
+        /// 使用父节点的蒙皮信息，修正子节点的顶点位置（对象空间）
+        /// </summary>
+        /// <param name="parentCache"></param>
+        /// <param name="attachmentCache"></param>
+        /// <param name="sharedMesh"></param>
+        /// <param name="boneIndex"></param>
         public void BindAttachment(VertexCache parentCache, VertexCache attachmentCache, Mesh sharedMesh, int boneIndex)
         {
             Matrix4x4 mat = parentCache.bindPose[boneIndex].inverse;
