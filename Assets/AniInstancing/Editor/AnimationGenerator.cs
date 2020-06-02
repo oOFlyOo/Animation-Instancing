@@ -12,7 +12,7 @@ using Object = UnityEngine.Object;
 
 namespace AnimationInstancing
 {
-    public class AnimationGenerator : EditorWindow
+    public partial class AnimationGenerator : EditorWindow
     {
         private static AnimationGenerator s_window;
         Vector2 scrollPosition;
@@ -183,6 +183,12 @@ namespace AnimationInstancing
                         workingInfo.animator.gameObject.transform.rotation = Quaternion.identity;
                     }
                     workingInfo = null;
+
+                    if (generateInfo.Count == 0)
+                    {
+                        GenerateAnimationFinish();
+                    }
+
                     return;
                 }
                 
@@ -219,13 +225,7 @@ namespace AnimationInstancing
             GameObject prefab = EditorGUILayout.ObjectField("Asset to Generate", generatedPrefab, typeof(GameObject), true) as GameObject;
             if (prefab != generatedPrefab)
             {
-                generateAnims.Clear();
-                customClips.Clear();
-                generatedPrefab = prefab;
-
-                SkinnedMeshRenderer[] meshRender = generatedPrefab.GetComponentsInChildren<SkinnedMeshRenderer>();
-                List<Matrix4x4> bindPose = new List<Matrix4x4>(150);
-                boneTransform = RuntimeHelper.MergeBone(meshRender, bindPose);
+                ChangeGeneratedPrefab(prefab);
             }
 
             bool error = false;
@@ -430,7 +430,9 @@ namespace AnimationInstancing
                 animator.applyRootMotion = true;
                 totalFrame = 0;
 
-                UnityEditor.Animations.AnimatorController controller = animator.runtimeAnimatorController as UnityEditor.Animations.AnimatorController;
+                // var controller = animator.runtimeAnimatorController as UnityEditor.Animations.AnimatorController;
+                var controller = GetBaseAnimatorController(animator) as UnityEditor.Animations.AnimatorController;
+
                 Debug.Assert(controller.layers.Length > 0);
                 cacheTransition.Clear();
                 cacheAnimationEvent.Clear();
@@ -541,11 +543,20 @@ namespace AnimationInstancing
 
         private void SaveAnimationInfo(string name)
         {
-            string folderName = "AnimationTexture";
-            string path = Application.dataPath + "/" + folderName + "/";
-            if (!Directory.Exists(path))
-                AssetDatabase.CreateFolder("Assets", folderName);
-            FileStream file = File.Open(path + name + ".bytes", FileMode.Create);
+            string dataPath = null;
+            dataPath = GetInstancingAnimInfoPath();
+            if (string.IsNullOrEmpty(dataPath))
+            {
+                string folderName = "AnimationTexture";
+                string path = Application.dataPath + "/" + folderName + "/";
+                dataPath = path + name + ".bytes";
+            }
+            var dataFolder = Path.GetDirectoryName(dataPath);
+
+            if (!Directory.Exists(dataFolder))
+                Directory.CreateDirectory(dataFolder);
+
+            FileStream file = File.Open(dataPath, FileMode.Create);
             BinaryWriter writer = new BinaryWriter(file);
             writer.Write(aniInfo.Count);
             foreach (var obj in aniInfo)
@@ -658,7 +669,7 @@ namespace AnimationInstancing
 
         private List<AnimationClip> GetClips(Animator animator)
         {
-            UnityEditor.Animations.AnimatorController controller = animator.runtimeAnimatorController as UnityEditor.Animations.AnimatorController;
+            UnityEditor.Animations.AnimatorController controller = GetBaseAnimatorController(animator) as UnityEditor.Animations.AnimatorController;
             return GetClipsFromStatemachine(controller.layers[0].stateMachine).ToList();
         }
 
@@ -1012,6 +1023,27 @@ namespace AnimationInstancing
                 Gizmos.DrawMesh(render[i].sharedMesh, obj.transform.position, obj.transform.rotation); 
             }
             
+        }
+
+        private void ChangeGeneratedPrefab(GameObject prefab)
+        {
+            generateAnims.Clear();
+            customClips.Clear();
+            generatedPrefab = prefab;
+
+            SkinnedMeshRenderer[] meshRender = generatedPrefab.GetComponentsInChildren<SkinnedMeshRenderer>();
+            List<Matrix4x4> bindPose = new List<Matrix4x4>(150);
+            boneTransform = RuntimeHelper.MergeBone(meshRender, bindPose);
+        }
+
+        private static RuntimeAnimatorController GetBaseAnimatorController(Animator animator)
+        {
+            var baseController = animator.runtimeAnimatorController as AnimatorOverrideController;
+            var controller = baseController
+                ? baseController.runtimeAnimatorController
+                : animator.runtimeAnimatorController;
+
+            return controller;
         }
     }
 }

@@ -18,7 +18,7 @@ namespace AnimationInstancing
     /// 动画系统管理器
     /// </summary>
     [AddComponentMenu("AnimationInstancingMgr")]
-    public class AnimationInstancingMgr : Singleton<AnimationInstancingMgr>
+    public partial class AnimationInstancingMgr : Singleton<AnimationInstancingMgr>
     {
         /// <summary>
         /// array[index base on texture][package index][instance index]
@@ -257,7 +257,7 @@ namespace AnimationInstancing
             }
             catch (Exception e)
             {
-                Debug.LogError(e.Message);
+                Debug.LogException(e);
                 Debug.Log("Initialize animation failed. Please check out the backed animation infos and regenerate it.");
                 script.enabled = false;
             }

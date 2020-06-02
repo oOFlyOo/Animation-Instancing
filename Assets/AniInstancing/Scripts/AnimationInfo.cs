@@ -47,6 +47,9 @@ namespace AnimationInstancing
         public Matrix4x4[] extraBindPose;
     }
 
+    /// <summary>
+    /// 用于Sort，则会打断排序
+    /// </summary>
     public class ComparerHash : IComparer<AnimationInfo>
     {
         public int Compare(AnimationInfo x, AnimationInfo y)
