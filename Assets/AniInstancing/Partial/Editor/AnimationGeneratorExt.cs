@@ -15,7 +15,7 @@ namespace AnimationInstancing
     {
         private const string INSTANCE_FOLDER = "Instancing";
         private const string INSTANCE_PREFAB_SUFFIX = "_inst.prefab";
-        private const string INSTANCE_AnimationInfo_SUFFIX = "_anim.bytes";
+        private const string INSTANCE_AnimationInfo_SUFFIX = "_inst.bytes";
         private const string INSTANCE_MATERIAL_SUFFIX = "_inst.mat";
 
         private bool _isMenuMode;
@@ -86,6 +86,13 @@ namespace AnimationInstancing
             return com;
         }
 
+        private static void CopyAsset(string originPath, string newPath)
+        {
+            // AssetDatabase.CopyAsset(originPath, newPath);
+            File.Copy(originPath, newPath, true);
+            AssetDatabase.ImportAsset(newPath);
+        }
+
 
         private static string GetInstancingFolder(string prefabPath)
         {
@@ -134,7 +141,7 @@ namespace AnimationInstancing
 
             var instPrefabPath = GetInstancingPrefabPath(prefabPath);
             s_window._instPrefabPath = instPrefabPath;
-            AssetDatabase.CopyAsset(prefabPath, instPrefabPath);
+            CopyAsset(prefabPath, instPrefabPath);
             var instGo = (GameObject)AssetDatabase.LoadMainAssetAtPath(instPrefabPath);
             AddComponetIfNotExitsts<AnimationInstancing>(instGo);
 
@@ -170,9 +177,10 @@ namespace AnimationInstancing
             var matPath = AssetDatabase.GetAssetPath(mat);
             var newMatPath = GetInstancingMaterialPath(matPath, GetInstancingFolder(s_window._originPrefabPath));
 
-            AssetDatabase.CopyAsset(matPath, newMatPath);
+            CopyAsset(matPath, newMatPath);
             var newMat = (Material) AssetDatabase.LoadMainAssetAtPath(newMatPath);
             newMat.shader = Shader.Find("AnimationInstancing/DiffuseInstancing");
+            newMat.enableInstancing = true;
             renderer.sharedMaterial = newMat;
         }
 

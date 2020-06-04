@@ -53,7 +53,7 @@ namespace AnimationInstancing
         /// <summary>
         /// 蒙皮信息
         /// </summary>
-        public class VertexCache
+        public partial class VertexCache
         {
             // renderName + boneName(attach only)
             public int nameCode;
@@ -72,6 +72,21 @@ namespace AnimationInstancing
             public ShadowCastingMode shadowcastingMode;
             public bool receiveShadow;
             public int layer;
+            
+            private int _refCount = 0;
+
+            public int RefCount => _refCount;
+
+            public VertexCache AddRefrence()
+            {
+                _refCount += 1;
+                return this;
+            }
+
+            public void DelRefrence()
+            {
+                _refCount -= 1;
+            }
         }
 
         public class AnimationTexture
@@ -81,6 +96,21 @@ namespace AnimationInstancing
             public Texture2D[] boneTexture { get; set; }
             public int blockWidth { get; set; }
             public int blockHeight { get; set; }
+            
+            private int _refCount = 0;
+
+            public int RefCount => _refCount;
+
+            public AnimationTexture AddRefrence()
+            {
+                _refCount += 1;
+                return this;
+            }
+
+            public void DelRefrence()
+            {
+                _refCount -= 1;
+            }
         }
 
         // all object used animation instancing
@@ -100,7 +130,10 @@ namespace AnimationInstancing
             get { return instancingPackageSize; }
             set { instancingPackageSize = value; }
         }
-        private List<AnimationTexture> animationTextureList = new List<AnimationTexture>();
+        /// <summary>
+        /// todo 后续得优化一下结构
+        /// </summary>
+        private Dictionary<int, AnimationTexture> animationTextureList = new Dictionary<int, AnimationTexture>();
 
         [SerializeField]
         private bool useInstancing = true;
@@ -121,9 +154,11 @@ namespace AnimationInstancing
 
         private void OnEnable()
         {
-            // todo 有点多了
-            boundingSphere = new BoundingSphere[5000];
-            InitializeCullingGroup();
+            if (NEED_CULLINGGROUP)
+            {
+                boundingSphere = new BoundingSphere[5000];
+                InitializeCullingGroup();
+            }
             cameraTransform = Camera.main.transform;
             aniInstancingList = new List<AnimationInstancing>(1000);
             if (!SystemInfo.supportsInstancing)
@@ -217,10 +252,16 @@ namespace AnimationInstancing
         public void Clear()
         {
             aniInstancingList.Clear();
-            cullingGroup.Dispose();
+            if(null != cullingGroup)
+            {
+                cullingGroup.Dispose();
+            }
+            
             vertexCachePool.Clear();
             instanceDataPool.Clear();
+            animationTextureList.Clear();
             InitializeCullingGroup();
+            AnimationManager.Instance.Clear();
         }
 
         public GameObject CreateInstance(GameObject prefab)
@@ -269,21 +310,31 @@ namespace AnimationInstancing
             bool removed = aniInstancingList.Remove(instance);
             if (removed)
             {
-                --usedBoundingSphereCount;
-                cullingGroup.SetBoundingSphereCount(usedBoundingSphereCount);
-                Debug.Assert(usedBoundingSphereCount >= 0);
-                if (usedBoundingSphereCount < 0)
+                DelMeshVertex(instance, instance.AttachBoneName);
+                if (NEED_CULLINGGROUP)
                 {
-                    Debug.DebugBreak();
+                    --usedBoundingSphereCount;
+
+                    cullingGroup.SetBoundingSphereCount(usedBoundingSphereCount);
+                    Debug.Assert(usedBoundingSphereCount >= 0);
+                    if (usedBoundingSphereCount < 0)
+                    {
+                        Debug.DebugBreak();
+                    }
                 }
             }
         }
 
         void OnDisable()
         {
+            // todo 这里的处理有点莫名其妙，先无视
             ReleaseBuffer();
-            cullingGroup.Dispose();
-            cullingGroup = null;
+            if(null != cullingGroup)
+            {
+                cullingGroup.Dispose();
+                cullingGroup = null;
+            }
+            
         }
 
 #if !UNITY_ANDROID && !UNITY_IPHONE
@@ -325,6 +376,9 @@ namespace AnimationInstancing
             for (int i = 0; i != aniInstancingList.Count; ++i)
             {
                 AnimationInstancing instance = aniInstancingList[i];
+                if (!instance._startFinish)
+                    continue;
+
                 if (!instance.IsPlaying())
                     continue;
                 if (instance.aniIndex < 0 && instance.parentInstance == null)
@@ -335,10 +389,11 @@ namespace AnimationInstancing
 
                 instance.UpdateAnimation();
                 instance.boundingSpere.position = instance.transform.position;
-                // 因为移除那里打乱了，因此必须同步一下
-                boundingSphere[i] = instance.boundingSpere;
-
-                // todo 不可见，上面的UpdateAnimation意义就不大了
+                if(NEED_CULLINGGROUP)
+                {
+                    boundingSphere[i] = instance.boundingSpere;
+                }
+                
                 if (!instance.visible)
                     continue;
                 instance.UpdateLod(cameraPosition);
@@ -460,14 +515,14 @@ namespace AnimationInstancing
 
         private int FindTexture_internal(string name)
         {
-            for (int i = 0; i != animationTextureList.Count; ++i)
+            foreach (var aniTexKeyValue in animationTextureList)
             {
-                AnimationTexture texture = animationTextureList[i] as AnimationTexture;
-                if (texture.name == name)
+                if (aniTexKeyValue.Value.name == name)
                 {
-                    return i;
+                    return aniTexKeyValue.Key;
                 }
             }
+
             return -1;
         }
 
@@ -490,10 +545,10 @@ namespace AnimationInstancing
         }
 
 
-        public VertexCache FindVertexCache(int renderName)
+        public VertexCache FindVertexCache(Renderer renderer, string attachBoneName = null)
         {
             VertexCache cache = null;
-            vertexCachePool.TryGetValue(renderName, out cache);
+            vertexCachePool.TryGetValue(GetVertexCacheName(renderer, attachBoneName), out cache);
             return cache;
         }
 
@@ -514,7 +569,7 @@ namespace AnimationInstancing
             aniTexture.name = prefabName;
             aniTexture.blockWidth = blockWidth;
             aniTexture.blockHeight = blockHeight;
-            animationTextureList.Add(aniTexture);
+            animationTextureList.Add(animationTextureList.Count, aniTexture);
 
             for (int i = 0; i != count; ++i)
             {
@@ -614,7 +669,7 @@ namespace AnimationInstancing
         public void AddMeshVertex(string prefabName,
             AnimationInstancing.LodInfo[] lodInfo,
             Transform[] bones,
-            List<Matrix4x4> bindPose,
+            Matrix4x4[] bindPose,
             int bonePerVertex,
             string alias = null)
         {
@@ -624,11 +679,13 @@ namespace AnimationInstancing
                 AnimationInstancing.LodInfo lod = lodInfo[x];
                 for (int i = 0; i != lod.skinnedMeshRenderer.Length; ++i)
                 {
+                    if (null == lod.skinnedMeshRenderer[i])
+                        continue;
                     Mesh m = lod.skinnedMeshRenderer[i].sharedMesh;
                     if (m == null)
                         continue;
 
-                    int nameCode = lod.skinnedMeshRenderer[i].name.GetHashCode();
+                    int nameCode = GetVertexCacheName(lod.skinnedMeshRenderer[i]);
                     int identify = GetIdentify(lod.skinnedMeshRenderer[i].sharedMaterials);
                     VertexCache cache = null;
                     if (vertexCachePool.TryGetValue(nameCode, out cache))
@@ -639,17 +696,17 @@ namespace AnimationInstancing
                             block = CreateBlock(cache, lod.skinnedMeshRenderer[i].sharedMaterials);
                             cache.instanceBlockList.Add(identify, block);
                         }
-                        lod.vertexCacheList[i] = cache;
+                        lod.vertexCacheList[i] = cache.AddRefrence();
                         lod.materialBlockList[i] = block;
                         continue;
                     }
 
-                    VertexCache vertexCache = CreateVertexCache(prefabName, nameCode, 0, m);
-                    vertexCache.bindPose = bindPose.ToArray();
+                    VertexCache vertexCache = CreateVertexCache(prefabName, nameCode, m);
+                    vertexCache.bindPose = bindPose;
                     MaterialBlock matBlock = CreateBlock(vertexCache, lod.skinnedMeshRenderer[i].sharedMaterials);
                     vertexCache.instanceBlockList.Add(identify, matBlock);
                     SetupVertexCache(vertexCache, matBlock, lod.skinnedMeshRenderer[i], bones, bonePerVertex);
-                    lod.vertexCacheList[i] = vertexCache;
+                    lod.vertexCacheList[i] = vertexCache.AddRefrence();
                     lod.materialBlockList[i] = matBlock;
                 }
 
@@ -659,11 +716,10 @@ namespace AnimationInstancing
                     if (m == null)
                         continue;
 
-                    int renderName = lod.meshRenderer[i].name.GetHashCode();
-                    int aliasName = (alias != null ? alias.GetHashCode() : 0);
+                    int nameCode = GetVertexCacheName(lod.meshRenderer[i], alias);
                     int identify = GetIdentify(lod.meshRenderer[i].sharedMaterials);
                     VertexCache cache = null;
-                    if (vertexCachePool.TryGetValue(renderName + aliasName, out cache))
+                    if (vertexCachePool.TryGetValue(nameCode, out cache))
                     { 
                         MaterialBlock block = null;
                         if (!cache.instanceBlockList.TryGetValue(identify, out block))
@@ -671,18 +727,18 @@ namespace AnimationInstancing
                             block = CreateBlock(cache, lod.meshRenderer[i].sharedMaterials);
                             cache.instanceBlockList.Add(identify, block);
                         }
-                        lod.vertexCacheList[j] = cache;
+                        lod.vertexCacheList[j] = cache.AddRefrence();
                         lod.materialBlockList[j] = block;
                         continue;
                     }
 
-                    VertexCache vertexCache = CreateVertexCache(prefabName, renderName, aliasName, m);
+                    VertexCache vertexCache = CreateVertexCache(prefabName, nameCode, m);
                     if (bindPose != null)
-                        vertexCache.bindPose = bindPose.ToArray();
+                        vertexCache.bindPose = bindPose;
                     MaterialBlock matBlock = CreateBlock(vertexCache, lod.meshRenderer[i].sharedMaterials);
                     vertexCache.instanceBlockList.Add(identify, matBlock);
                     SetupVertexCache(vertexCache, matBlock, lod.meshRenderer[i], m, bones, bonePerVertex);
-                    lod.vertexCacheList[lod.skinnedMeshRenderer.Length + i] = vertexCache;
+                    lod.vertexCacheList[lod.skinnedMeshRenderer.Length + i] = vertexCache.AddRefrence();
                     lod.materialBlockList[lod.skinnedMeshRenderer.Length + i] = matBlock;
                 }
             }
@@ -723,24 +779,22 @@ namespace AnimationInstancing
             return block;
         }
 
-        private VertexCache CreateVertexCache(string prefabName, int renderName, int alias, Mesh mesh)
+        private VertexCache CreateVertexCache(string prefabName, int nameCode, Mesh mesh)
         {
             VertexCache vertexCache = new VertexCache();
-            int cacheName = renderName + alias;
-            vertexCachePool[cacheName] = vertexCache;
-            vertexCache.nameCode = cacheName;
+            vertexCachePool[nameCode] = vertexCache;
+            vertexCache.nameCode = nameCode;
             vertexCache.mesh = mesh;
-            vertexCache.boneTextureIndex = FindTexture_internal(prefabName);
+            var texIndex = FindTexture_internal(prefabName);
+            if (texIndex >= 0)
+            {
+                // 暂时不考虑那种Attach的
+                animationTextureList[texIndex].AddRefrence();
+            }
+            vertexCache.boneTextureIndex = texIndex;
             vertexCache.weight = new Vector4[mesh.vertexCount];
             vertexCache.boneIndex = new Vector4[mesh.vertexCount];
-            int packageCount = GetPackageCount(vertexCache);
-            InstanceData data = null;
-            int instanceName = prefabName.GetHashCode() + alias;
-            if (!instanceDataPool.TryGetValue(instanceName, out data))
-            {
-                data = CreateInstanceData(packageCount);
-                instanceDataPool.Add(instanceName, data);
-            }
+            // int packageCount = GetPackageCount(vertexCache);
             vertexCache.instanceBlockList = new Dictionary<int, MaterialBlock>();
             return vertexCache;
         }
@@ -926,6 +980,9 @@ namespace AnimationInstancing
 
         public void AddBoundingSphere(AnimationInstancing instance)
         {
+            if (!NEED_CULLINGGROUP)
+                return;
+
             boundingSphere[usedBoundingSphereCount++] = instance.boundingSpere;
             cullingGroup.SetBoundingSphereCount(usedBoundingSphereCount);
             instance.visible = cullingGroup.IsVisible(usedBoundingSphereCount - 1);
@@ -979,6 +1036,77 @@ namespace AnimationInstancing
                 attachmentCache.weight[j].z = -0.1f;
                 attachmentCache.weight[j].w = -0.1f;
                 attachmentCache.boneIndex[j].x = boneIndex;
+            }
+        }
+
+        private int GetVertexCacheName(Renderer renderer, string attachBoneName = null)
+        {
+            var rendererNameHash = renderer.name.GetHashCode();
+            var nameHash = rendererNameHash + (string.IsNullOrEmpty(attachBoneName) ? 0 : attachBoneName.GetHashCode());
+
+            return nameHash;
+        }
+
+        private void DelMeshVertex(Renderer render, string boneName = null)
+        {
+            var cacheKey = GetVertexCacheName(render, boneName);
+
+            VertexCache cache = null;
+            if (vertexCachePool.TryGetValue(cacheKey, out cache))
+            {
+                cache.DelRefrence();
+                if (cache.RefCount <= 0)
+                {
+                    var aniTex = FindTexture(cache.boneTextureIndex);
+                    if (aniTex != null)
+                    {
+                        aniTex.DelRefrence();
+                        if (aniTex.RefCount <= 0)
+                        {
+                            animationTextureList.Remove(cache.boneTextureIndex);
+                        }
+                    }
+
+                    vertexCachePool.Remove(cacheKey);
+                }
+            }
+        }
+        
+        public void DelMeshVertex(AnimationInstancing instancing, string boneName = null)
+        {
+            if (null == instancing)
+                return;
+
+            if (!instancing._startFinish)
+                return;
+
+            var lodInfo = instancing.lodInfo;
+            if (null == lodInfo)
+                return;
+
+            for (int x = 0; x != lodInfo.Length; ++x)
+            {
+                AnimationInstancing.LodInfo lod = lodInfo[x];
+
+                for (int i = 0; i != lod.skinnedMeshRenderer.Length; ++i)
+                {
+                    Mesh m = lod.skinnedMeshRenderer[i].sharedMesh;
+                    if (m == null)
+                        continue;
+
+                    DelMeshVertex(lod.skinnedMeshRenderer[i], boneName);
+                }
+
+                for (int i = 0, j = lod.skinnedMeshRenderer.Length; i != lod.meshRenderer.Length; ++i, ++j)
+                {
+                    if (null == lod.meshFilter[i])
+                        continue;
+                    Mesh m = lod.meshFilter[i].sharedMesh;
+                    if (m == null)
+                        continue;
+                    
+                    DelMeshVertex(lod.meshRenderer[i], boneName); 
+                }
             }
         }
     }

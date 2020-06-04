@@ -17,7 +17,7 @@ namespace AnimationInstancing
     /// 动画控制器
     /// </summary>
     [AddComponentMenu("AnimationInstancing")]
-    public class AnimationInstancing : MonoBehaviour
+    public partial class AnimationInstancing : MonoBehaviour
     {
         private Animator animator = null;
         [NonSerialized]
@@ -32,6 +32,7 @@ namespace AnimationInstancing
         public BoundingSphere boundingSpere;
         public bool visible { get; set; }
         public AnimationInstancing parentInstance { get; set; }
+        public string AttachBoneName { get; set; }
         public float playSpeed = 1.0f;
         public UnityEngine.Rendering.ShadowCastingMode shadowCastingMode;
         public bool receiveShadow;
@@ -100,7 +101,10 @@ namespace AnimationInstancing
         private bool isMeshRender = false;
         [NonSerialized]
         private List<AnimationInstancing> listAttachment;
-
+        
+        public bool _startFinish = false;
+        private float _animationSpeed = 1.0f;
+        
         void Start()
         {
             if (!AnimationInstancingMgr.Instance.UseInstancing)
@@ -199,15 +203,21 @@ namespace AnimationInstancing
 
         private void OnDestroy()
         {
-            if (!AnimationInstancingMgr.IsDestroy())
-            {
-                AnimationInstancingMgr.Instance.RemoveInstance(this);
-            }
             if (parentInstance != null)
             {
                 parentInstance.Deattach(this);
                 parentInstance = null;
             }
+
+            if (!AnimationInstancingMgr.IsDestroy())
+            {
+                AnimationInstancingMgr.Instance.RemoveInstance(this);
+            }
+            
+            // if (!AnimationManager.IsDestroy())
+            // {
+            //     AnimationManager.Instance.RemoveAnimaitonInfo(this);
+            // }
         }
 
         private void OnEnable()
@@ -255,49 +265,40 @@ namespace AnimationInstancing
                     null,
                     null,
                     bonePerVertex);
+                
+                _startFinish = true;
+
                 return true;
             }
 
 			AnimationManager.InstanceAnimationInfo info = AnimationManager.Instance.FindAnimationInfo(prototype, this);
             if (info != null)
             {
+                searchInfo = new AnimationInfo();
+                comparer = new ComparerHash();
+
                 // aniInfo = info.listAniInfo;
                 // 这里的操作挺有问题的，如果已经有数据了直接使用，没有的话就直接在外部赋值
                 Prepare(info.listAniInfo, info.extraBoneInfo);
             }
-            searchInfo = new AnimationInfo();
-            comparer = new ComparerHash();
+
+            _startFinish = true;
             return true;
         }
 
         public void Prepare(List<AnimationInfo> infoList, ExtraBoneInfo extraBoneInfo)
         {
             aniInfo = infoList;
-            //extraBoneInfo = extraBoneInfo;
-            List<Matrix4x4> bindPose = new List<Matrix4x4>(150);
-            // to optimize, MergeBone don't need to call every time
-            Transform[] bones = RuntimeHelper.MergeBone(lodInfo[0].skinnedMeshRenderer, bindPose);
-            allTransforms = bones;
-
+            
+            Matrix4x4[] bindPose;
             if (extraBoneInfo != null)
             {
-                List<Transform> list = new List<Transform>();
-                list.AddRange(bones);                
-                Transform[] transforms = gameObject.GetComponentsInChildren<Transform>();
-                for (int i = 0; i != extraBoneInfo.extraBone.Length; ++i)
-                {
-                    for (int j = 0; j != transforms.Length; ++j)
-                    {
-                        if (extraBoneInfo.extraBone[i] == transforms[j].name)
-                        {
-                            list.Add(transforms[j]);
-                        }
-                    }
-                    bindPose.Add(extraBoneInfo.extraBindPose[i]);
-                }
-                allTransforms = list.ToArray();
+                allTransforms = RuntimeHelper.MergeBoneRunTime(lodInfo[0].skinnedMeshRenderer, out bindPose, gameObject.GetComponentsInChildren<Transform>(), extraBoneInfo.extraBone, extraBoneInfo.extraBindPose);
             }
-            
+            else
+            {
+                allTransforms = RuntimeHelper.MergeBoneRunTime(lodInfo[0].skinnedMeshRenderer, out bindPose);
+            }
 
 			AnimationInstancingMgr.Instance.AddMeshVertex(prototype.name,
                 lodInfo,
@@ -473,7 +474,7 @@ namespace AnimationInstancing
                     preAniFrame = -1;
                 }
             }
-            float speed = playSpeed * speedParameter;
+            float speed = playSpeed * speedParameter * _animationSpeed;
             curFrame += speed * Time.deltaTime * aniInfo[aniIndex].fps;
             int totalFrame = aniInfo[aniIndex].totalFrame;
             switch (wrapMode)
@@ -604,18 +605,15 @@ namespace AnimationInstancing
             }
 
             attachment.parentInstance = this;
-            AnimationInstancingMgr.VertexCache parentCache = AnimationInstancingMgr.Instance.FindVertexCache(lodInfo[0].skinnedMeshRenderer[0].name.GetHashCode());
+            var parentCache = AnimationInstancingMgr.Instance.FindVertexCache(lodInfo[0].skinnedMeshRenderer[0]);
             listAttachment.Add(attachment);
+            attachment.AttachBoneName = boneName;
             
-            int nameCode = boneName.GetHashCode();
-            nameCode += attachment.lodInfo[0].meshRenderer.Length > 0? attachment.lodInfo[0].meshRenderer[0].name.GetHashCode(): 0;
-            if (attachment.lodInfo[0].meshRenderer.Length == 0)
-            {
-                //todo, to support the attachment that has skinnedMeshRenderer;
-                int skinnedMeshRenderCount = attachment.lodInfo[0].skinnedMeshRenderer.Length;
-                nameCode += skinnedMeshRenderCount > 0? attachment.lodInfo[0].skinnedMeshRenderer[0].name.GetHashCode(): 0;
-            }
-            AnimationInstancingMgr.VertexCache cache = AnimationInstancingMgr.Instance.FindVertexCache(nameCode);
+            var render = attachment.lodInfo[0].meshRenderer.Length > 0
+                ? (Renderer)attachment.lodInfo[0].meshRenderer[0]
+                : attachment.lodInfo[0].skinnedMeshRenderer[0];
+            
+            var cache = AnimationInstancingMgr.Instance.FindVertexCache(render, boneName);
             // if we can reuse the VertexCache, we don't need to create one
             if (cache != null)
             {
@@ -656,8 +654,15 @@ namespace AnimationInstancing
         {
             attachment.visible = false;
             attachment.parentInstance = null;
+
             RefreshAttachmentAnimation(-1);
             listAttachment.Remove(attachment);
+            
+            if (!AnimationInstancingMgr.IsDestroy())
+            {
+                AnimationInstancingMgr.Instance.DelMeshVertex(attachment, attachment.AttachBoneName);
+            }
+            attachment.AttachBoneName = null;
         }
 
         public int GetAnimationCount()
@@ -682,6 +687,54 @@ namespace AnimationInstancing
                     }
                 }
             }
+        }
+        
+        public void SetAnimationSpeed(float aniSpeed)
+        {
+            _animationSpeed = aniSpeed;
+        }
+
+        public float GetAnimationSpeed()
+        {
+            return _animationSpeed;
+        }
+
+        public bool IsPlayingAniByName(string aniName)
+        {
+            if ((0 > aniIndex) || (null == aniInfo[aniIndex]))
+                return false;
+
+            string curAniName = aniInfo[aniIndex].animationName;
+
+            bool flag = aniName == curAniName;
+            return flag;
+        }
+
+        public bool HasAnimationInfo(string aniName)
+        {
+            if (aniInfo == null)
+                return false;
+
+            int hash = aniName.GetHashCode();
+            searchInfo.animationNameHash = hash;
+            int index = aniInfo.BinarySearch(searchInfo, comparer);
+            return index >= 0;
+        }
+
+        public float GetAnimationDuration(string aniName)
+        {
+            if (aniInfo == null)
+                return 0;
+
+            int hash = aniName.GetHashCode();
+            searchInfo.animationNameHash = hash;
+            int index = aniInfo.BinarySearch(searchInfo, comparer);
+            int frame = aniInfo[index].totalFrame;
+            int fps = aniInfo[index].fps;
+            float preSecond = 1.0f / fps;
+            //正常animator attack 1.6s instancing计算会多一帧，所以-1
+            float duration = preSecond * (frame - 1);
+            return duration;
         }
     }
 }

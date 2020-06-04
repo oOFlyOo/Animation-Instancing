@@ -9,7 +9,6 @@ using UnityEditorInternal;
 using System.IO;
 using Object = UnityEngine.Object;
 
-
 namespace AnimationInstancing
 {
     public partial class AnimationGenerator : EditorWindow
@@ -194,9 +193,9 @@ namespace AnimationInstancing
                 
                 float deltaTime = workingInfo.length / (workingInfo.info.totalFrame - 1);
                 workingInfo.animator.Update(deltaTime);
-                // EditorUtility.DisplayProgressBar("Generating Animations",
-                //     string.Format("Animation '{0}' is Generating.", workingInfo.info.animationName),
-                //     ((float)(generateCount - generateInfo.Count) / generateCount));
+                 EditorUtility.DisplayProgressBar("Generating Animations",
+                    string.Format("Animation '{0}' is Generating.", workingInfo.info.animationName),
+                    ((float)(generateCount - generateInfo.Count) / generateCount));
 
 
 				//Debug.Log(string.Format("Animation '{0}' is Generating. Current frame is {1}", workingInfo.info.animationName, workingInfo.workingFrame));
@@ -243,10 +242,6 @@ namespace AnimationInstancing
                         {
                             if (fbx != generatedFbx)
                             {
-                                SkinnedMeshRenderer[] meshRender = generatedPrefab.GetComponentsInChildren<SkinnedMeshRenderer>();
-                                List<Matrix4x4> bindPose = new List<Matrix4x4>(150);
-                                boneTransform = RuntimeHelper.MergeBone(meshRender, bindPose);
-
                                 generatedFbx = fbx;
                                 var allTrans = generatedPrefab.GetComponentsInChildren<Transform>().ToList();
                                 allTrans.RemoveAll(q => boneTransform.Contains(q));
@@ -378,7 +373,7 @@ namespace AnimationInstancing
                 Debug.Assert(script);
                 SkinnedMeshRenderer[] meshRender = generatedObject.GetComponentsInChildren<SkinnedMeshRenderer>();
                 List<Matrix4x4> bindPose = new List<Matrix4x4>(150);
-                Transform[] boneTransform = RuntimeHelper.MergeBone(meshRender, bindPose);
+                Transform[] boneTransform = RuntimeHelper.MergeBoneEditorOnly(meshRender, bindPose);
 
                 // calculate the bindpose of attached points
                 if (generatedFbx)
@@ -462,7 +457,8 @@ namespace AnimationInstancing
             for (int i = 0; i != stateMachine.states.Length; ++i)
             {
                 ChildAnimatorState state = stateMachine.states[i];
-                AnimationClip clip = state.state.motion as AnimationClip;
+                // AnimationClip clip = state.state.motion as AnimationClip;
+                AnimationClip clip = GetRealAnimationClip(animator, state.state.motion);
                 bool needBake = false;
                 // blendtree
                 if (clip == null)
@@ -472,7 +468,7 @@ namespace AnimationInstancing
                 foreach (var obj in generateInfo)
                 {
                     // 已经添加了
-                    if (obj.info.animationName == clip.name)
+                    if (obj.info.animationName == GetStateNameInsteadAnimationName(state.state, clip))
                     {
                         needBake = false;
                         break;
@@ -490,7 +486,7 @@ namespace AnimationInstancing
                 bake.meshRender = meshRender;
                 bake.layer = layer;
                 bake.info = new AnimationInfo();
-                bake.info.animationName = clip.name;
+                bake.info.animationName = GetStateNameInsteadAnimationName(state.state, clip);
                 bake.info.animationNameHash = state.state.nameHash;
                 bake.info.animationIndex = animationIndex;
                 bake.info.totalFrame = (int)(bake.length * bakeFPS + 0.5f) + 1;
@@ -670,10 +666,10 @@ namespace AnimationInstancing
         private List<AnimationClip> GetClips(Animator animator)
         {
             UnityEditor.Animations.AnimatorController controller = GetBaseAnimatorController(animator) as UnityEditor.Animations.AnimatorController;
-            return GetClipsFromStatemachine(controller.layers[0].stateMachine).ToList();
+            return GetClipsFromStatemachine(controller.layers[0].stateMachine, animator).ToList();
         }
 
-        private HashSet<AnimationClip> GetClipsFromStatemachine(UnityEditor.Animations.AnimatorStateMachine stateMachine)
+        private HashSet<AnimationClip> GetClipsFromStatemachine(UnityEditor.Animations.AnimatorStateMachine stateMachine, Animator animator)
         {
             var list = new HashSet<AnimationClip>();
             for (int i = 0; i != stateMachine.states.Length; ++i)
@@ -685,16 +681,18 @@ namespace AnimationInstancing
 					ChildMotion[] childMotion = blendTree.children;
 					for(int j = 0; j != childMotion.Length; ++j) 
 					{
-						list.Add(childMotion[j].motion as AnimationClip);
+						// list.Add(childMotion[j].motion as AnimationClip);
+						list.Add(GetRealAnimationClip(animator, childMotion[j].motion));
 					}
 				}
 				else if (state.state.motion != null)
-                	list.Add(state.state.motion as AnimationClip);
+                	// list.Add(state.state.motion as AnimationClip);
+                	list.Add(GetRealAnimationClip(animator, state.state.motion));
             }
             // Sub State
             for (int i = 0; i != stateMachine.stateMachines.Length; ++i)
             {
-                list.IntersectWith(GetClipsFromStatemachine(stateMachine.stateMachines[i].stateMachine));
+                list.IntersectWith(GetClipsFromStatemachine(stateMachine.stateMachines[i].stateMachine, animator));
             }
 
             foreach (var clip in list)
@@ -1031,9 +1029,13 @@ namespace AnimationInstancing
             customClips.Clear();
             generatedPrefab = prefab;
 
+            if (!prefab)
+            {
+                return;
+            }
+
             SkinnedMeshRenderer[] meshRender = generatedPrefab.GetComponentsInChildren<SkinnedMeshRenderer>();
-            List<Matrix4x4> bindPose = new List<Matrix4x4>(150);
-            boneTransform = RuntimeHelper.MergeBone(meshRender, bindPose);
+            boneTransform = RuntimeHelper.MergeBone(meshRender);
         }
 
         private static RuntimeAnimatorController GetBaseAnimatorController(Animator animator)
@@ -1044,6 +1046,35 @@ namespace AnimationInstancing
                 : animator.runtimeAnimatorController;
 
             return controller;
+        }
+
+        private static AnimationClip GetRealAnimationClip(Animator animator, Motion motion)
+        {
+            return GetRealAnimationClip(animator, motion as AnimationClip);
+        }
+
+        private static AnimationClip GetRealAnimationClip(Animator animator, AnimationClip clip)
+        {
+            var baseController = animator.runtimeAnimatorController as AnimatorOverrideController;
+            if (baseController)
+            {
+                var overideClip = baseController[clip];
+                return overideClip;
+            }
+
+            return clip;
+        }
+
+
+        /// <summary>
+        /// 修正改用State的名字
+        /// </summary>
+        /// <param name="state"></param>
+        /// <param name="clip"></param>
+        /// <returns></returns>
+        private static string GetStateNameInsteadAnimationName(AnimatorState state, AnimationClip clip)
+        {
+            return state.name;
         }
     }
 }
